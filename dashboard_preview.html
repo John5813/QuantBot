@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quant Spot Bot — Veb Boshqaruv Paneli (Mac Brauzer Sinov Versiyasi)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-6">
+  <div class="max-w-5xl mx-auto space-y-5">
+    <!-- Header -->
+    <div class="flex flex-wrap items-center justify-between gap-4 bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <div>
+        <h1 class="text-lg font-bold text-white flex items-center gap-2">
+          📊 Quant Spot Bot — Veb Boshqaruv Paneli
+          <span class="text-xs px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">BINANCE JONLI SIMULYATOR</span>
+        </h1>
+        <p class="text-xs text-slate-400 mt-0.5">1,000,000 so'm byudjet • 1% Risk (-10,000 so'm SL) • 1:2 Foyda (+20,000 so'm TP) • 3% Kunlik Kill-Switch</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="manualAddTrade()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition">
+          ➕ Yangi / 2-Bitim Qo'shish
+        </button>
+        <button onclick="closeAllTrades()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white transition">
+          ❌ Barchasini Yopish
+        </button>
+        <button onclick="togglePause()" id="btnPause" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition">
+          ⏸ Pauza
+        </button>
+      </div>
+    </div>
+
+    <!-- Market / Asset Selector Card -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-sm font-semibold text-white">🎯 Bozor va Aktivni Tanlash</h2>
+          <p class="text-xs text-slate-400">O'zingiz xohlagan bozorni tanlang yoki 5 ta bozor bo'yicha Avto-Skanerni yoqing</p>
+        </div>
+        <label class="flex items-center gap-2 text-xs bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 cursor-pointer">
+          <input type="checkbox" id="chkAutoScan" onchange="autoScan = this.checked" class="accent-sky-500" />
+          <span>🔍 Avto-Skaner (5 ta bozordan eng qulayini tanlash)</span>
+        </label>
+      </div>
+      <div id="assetButtons" class="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1"></div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-xs text-slate-400">Umumiy Spot Balans</div>
+        <div id="kpiBalanceUzs" class="text-base font-bold text-white mt-1">1,000,000 so'm</div>
+        <div id="kpiBalanceUsdt" class="text-xs text-slate-400 font-mono">$78.12 USDT</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-xs text-slate-400">Bugungi Natija (Limit: -30,000 so'm)</div>
+        <div id="kpiDailyPnl" class="text-base font-bold text-emerald-400 mt-1">+0 so'm</div>
+        <div id="kpiKillSwitch" class="text-xs text-emerald-400">🟢 Kill-Switch: Xavfsiz</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-xs text-slate-400">Ochiq Bitimlar</div>
+        <div id="kpiOpenCount" class="text-base font-bold text-white mt-1">0 / 2</div>
+        <div id="kpiFreeCap" class="text-xs text-slate-400 font-mono">Bo'sh: 1,000,000 so'm</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-xs text-slate-400">Joriy Bozor Narxi</div>
+        <div id="kpiPrice" class="text-base font-bold text-sky-400 mt-1">Yuklanmoqda...</div>
+        <div id="kpiIndicators" class="text-xs text-slate-400 font-mono">RSI: - | EMA20/50</div>
+      </div>
+    </div>
+
+    <!-- Live Chart Canvas -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
+      <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span id="chartTitle" class="font-semibold text-white">📈 Jonli Shamchalar va Strategiya Chiziqlari (PAXGUSDT • 15m)</span>
+        <div class="flex items-center gap-3 font-mono text-[11px] text-slate-400">
+          <span><b class="text-sky-400">━━</b> EMA 20</span>
+          <span><b class="text-amber-400">━━</b> EMA 50</span>
+          <span><b class="text-emerald-400">- -</b> Take-Profit (+2%)</span>
+          <span><b class="text-rose-400">- -</b> Stop-Loss (-1%)</span>
+        </div>
+      </div>
+      <canvas id="liveChart" class="w-full rounded-lg bg-slate-950 border border-slate-800" height="280"></canvas>
+      <div id="statusNotice" class="text-xs font-mono text-slate-400 pt-1">
+        ▶️ Binance'dan haqiqiy shamchalar tortilmoqda...
+      </div>
+    </div>
+
+    <!-- Active Positions & Past Trades History -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
+        <h3 class="text-sm font-semibold text-white">⚡ Hozirgi Ochiq Bitimlar (#1 va #2)</h3>
+        <div id="openPositionsList" class="text-xs text-slate-400 space-y-2">Hozir ochiq bitim yo'q.</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
+        <h3 class="text-sm font-semibold text-white">📜 Yopilgan Bitimlar Tarixi</h3>
+        <div id="historyList" class="text-xs text-slate-400 space-y-1.5 max-h-56 overflow-y-auto">Hali yopilgan bitimlar yo'q.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const ALLOWED = {
+      PAXGUSDT: "Oltin (PAXG/USDT)",
+      BTCUSDT: "Bitcoin (BTC/USDT)",
+      ETHUSDT: "Ethereum (ETH/USDT)",
+      BNBUSDT: "Binance Coin (BNB/USDT)",
+      SOLUSDT: "Solana (SOL/USDT)"
+    };
+    const UZS_RATE = 12800;
+    let symbol = "PAXGUSDT";
+    let autoScan = false;
+    let paused = false;
+    let balanceUzs = 1000000;
+    let dailyPnlUzs = 0;
+    let killSwitch = false;
+    let openPositions = [];
+    let history = [];
+    let candles = [];
+    let simIdx = 60;
+    let allCandles = [];
+    let nextId = 1;
+
+    async function loadBinanceHistory(sym) {
+      symbol = sym;
+      renderButtons();
+      document.getElementById('statusNotice').textContent = `⏳ Binance'dan ${sym} tarixiy grafigi yuklanmoqda...`;
+      try {
+        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=15m&limit=200`);
+        const raw = await res.json();
+        allCandles = raw.map((r, idx) => ({
+          idx,
+          time: new Date(r[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+          open: parseFloat(r[1]),
+          high: parseFloat(r[2]),
+          low: parseFloat(r[3]),
+          close: parseFloat(r[4]),
+          ema20: null,
+          ema50: null,
+          rsi: 50
+        }));
+        computeIndicators(allCandles);
+        simIdx = 60;
+        candles = allCandles.slice(0, simIdx);
+        document.getElementById('statusNotice').textContent = `✅ Binance'dan haqiqiy ${sym} shamchalari yuklandi. Jonli simulyatsiya ishlamoqda.`;
+      } catch (e) {
+        document.getElementById('statusNotice').textContent = `⚠️ Internet yo'q yoki API yopiq — oflayn grafik ishlatilmoqda.`;
+      }
+      renderUI();
+    }
+
+    function computeIndicators(arr) {
+      for (let i = 0; i < arr.length; i++) {
+        if (i >= 19) {
+          if (i === 19) {
+            let s = 0; for (let k = 0; k <= 19; k++) s += arr[k].close;
+            arr[i].ema20 = s / 20;
+          } else {
+            const k = 2 / 21;
+            arr[i].ema20 = arr[i].close * k + arr[i - 1].ema20 * (1 - k);
+          }
+        }
+        if (i >= 49) {
+          if (i === 49) {
+            let s = 0; for (let k = 0; k <= 49; k++) s += arr[k].close;
+            arr[i].ema50 = s / 50;
+          } else {
+            const k = 2 / 51;
+            arr[i].ema50 = arr[i].close * k + arr[i - 1].ema50 * (1 - k);
+          }
+        }
+        if (i >= 15) {
+          let g = 0, l = 0;
+          for (let k = i - 13; k <= i; k++) {
+            const d = arr[k].close - arr[k - 1].close;
+            if (d > 0) g += d; else l -= d;
+          }
+          const rs = l === 0 ? 100 : (g / 14) / (l / 14);
+          arr[i].rsi = +(100 - 100 / (1 + rs)).toFixed(1);
+        }
+      }
+    }
+
+    function renderButtons() {
+      const container = document.getElementById('assetButtons');
+      container.innerHTML = '';
+      Object.entries(ALLOWED).forEach(([sym, label]) => {
+        const active = sym === symbol;
+        const btn = document.createElement('button');
+        btn.onclick = () => loadBinanceHistory(sym);
+        btn.className = `px-3 py-2 rounded-lg text-xs font-medium border text-left transition ${
+          active ? 'bg-sky-500/20 border-sky-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+        }`;
+        btn.innerHTML = `<div class="font-bold">${sym}</div><div class="text-[11px] opacity-80">${label}</div>`;
+        container.appendChild(btn);
+      });
+    }
+
+    function manualAddTrade() {
+      if (killSwitch || openPositions.length >= 2 || !candles.length) return;
+      const c = candles[candles.length - 1];
+      openPosition(c, "QO'LDA (2-BITIM)");
+      renderUI();
+    }
+
+    function openPosition(c, source) {
+      const entry = c.close;
+      const sl = +(entry * 0.992).toFixed(2);
+      const tp = +(entry * 1.016).toFixed(2);
+      openPositions.push({
+        id: nextId++,
+        symbol,
+        source,
+        entry,
+        sl,
+        tp,
+        riskUzs: 10000,
+        rewardUzs: 20000
+      });
+    }
+
+    function closePosition(id, reason) {
+      const idx = openPositions.findIndex(p => p.id === id);
+      if (idx === -1 || !candles.length) return;
+      const p = openPositions.splice(idx, 1)[0];
+      const cur = candles[candles.length - 1].close;
+      const pct = (cur - p.entry) / p.entry;
+      const pnlUzs = Math.round(480000 * pct);
+      balanceUzs += pnlUzs;
+      dailyPnlUzs += pnlUzs;
+      history.push({ id: p.id, symbol: p.symbol, reason, pnlUzs, time: new Date().toLocaleTimeString() });
+      renderUI();
+    }
+
+    function closeAllTrades() {
+      openPositions.map(p => p.id).forEach(id => closePosition(id, "QO'LDA YOPILDI"));
+    }
+
+    function togglePause() {
+      paused = !paused;
+      document.getElementById('btnPause').textContent = paused ? '▶️ Davom ettirish' : '⏸ Pauza';
+    }
+
+    function stepSimulation() {
+      if (paused || !allCandles.length) return;
+      simIdx = (simIdx + 1) % allCandles.length;
+      if (simIdx < 55) simIdx = 55;
+      candles = allCandles.slice(0, simIdx + 1);
+      const c = candles[candles.length - 1];
+      const prev = candles[candles.length - 2];
+
+      // Check SL / TP
+      for (let i = openPositions.length - 1; i >= 0; i--) {
+        const p = openPositions[i];
+        if (c.low <= p.sl) {
+          balanceUzs -= p.riskUzs;
+          dailyPnlUzs -= p.riskUzs;
+          openPositions.splice(i, 1);
+          history.push({ id: p.id, symbol: p.symbol, reason: "STOP-LOSS (-1%)", pnlUzs: -p.riskUzs, time: c.time });
+          if (dailyPnlUzs <= -30000) killSwitch = true;
+        } else if (c.high >= p.tp) {
+          balanceUzs += p.rewardUzs;
+          dailyPnlUzs += p.rewardUzs;
+          openPositions.splice(i, 1);
+          history.push({ id: p.id, symbol: p.symbol, reason: "TAKE-PROFIT (+2%)", pnlUzs: p.rewardUzs, time: c.time });
+        }
+      }
+
+      // Auto entry
+      if (!killSwitch && openPositions.length === 0 && c.ema20 && c.ema50) {
+        if (c.ema20 > c.ema50 && c.rsi >= 35 && c.rsi <= 54 && c.close > prev.close) {
+          openPosition(c, "AVTOMATIK");
+        }
+      }
+      renderUI();
+    }
+
+    function renderUI() {
+      if (!candles.length) return;
+      const c = candles[candles.length - 1];
+      document.getElementById('kpiBalanceUzs').textContent = `${balanceUzs.toLocaleString()} so'm`;
+      document.getElementById('kpiBalanceUsdt').textContent = `$${(balanceUzs / UZS_RATE).toFixed(2)} USDT`;
+      const dEl = document.getElementById('kpiDailyPnl');
+      dEl.textContent = `${dailyPnlUzs >= 0 ? '+' : ''}${dailyPnlUzs.toLocaleString()} so'm`;
+      dEl.className = `text-base font-bold mt-1 ${dailyPnlUzs >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+      document.getElementById('kpiKillSwitch').textContent = killSwitch ? '🛑 Kill-Switch: Savdo bloklangan' : '🟢 Kill-Switch: Xavfsiz';
+      document.getElementById('kpiOpenCount').textContent = `${openPositions.length} / 2`;
+      const freeUzs = Math.max(0, balanceUzs - openPositions.length * 480000);
+      document.getElementById('kpiFreeCap').textContent = `Bo'sh: ${freeUzs.toLocaleString()} so'm`;
+      document.getElementById('kpiPrice').textContent = `$${c.close.toLocaleString()}`;
+      document.getElementById('kpiIndicators').textContent = `RSI: ${c.rsi} | EMA20: ${c.ema20 ? c.ema20.toFixed(1) : '-'}`;
+      document.getElementById('chartTitle').textContent = `📈 Jonli Shamchalar va Strategiya Chiziqlari (${symbol} • 15m)`;
+
+      const openEl = document.getElementById('openPositionsList');
+      if (!openPositions.length) {
+        openEl.innerHTML = '<div class="text-slate-500">Hozir ochiq bitim yo\\'q.</div>';
+      } else {
+        openEl.innerHTML = openPositions.map(p => {
+          const pnl = Math.round(((c.close - p.entry) / p.entry) * 480000);
+          return `<div class="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+            <div>
+              <div class="font-bold text-white">Bitim #${p.id} (${p.symbol} • ${p.source})</div>
+              <div class="text-[11px] font-mono text-slate-400">Kirish: $${p.entry} | SL: $${p.sl} | TP: $${p.tp}</div>
+            </div>
+            <div class="text-right">
+              <div class="font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${pnl >= 0 ? '+' : ''}${pnl.toLocaleString()} so'm</div>
+              <button onclick="closePosition(${p.id}, 'QO\\'LDA YOPILDI')" class="text-[11px] text-rose-400 underline">Yopish</button>
+            </div>
+          </div>`;
+        }).join('');
+      }
+
+      const histEl = document.getElementById('historyList');
+      if (!history.length) {
+        histEl.innerHTML = '<div class="text-slate-500">Hali yopilgan bitimlar yo\\'q.</div>';
+      } else {
+        histEl.innerHTML = history.slice().reverse().map(t => `
+          <div class="p-2 rounded bg-slate-950 border border-slate-800 flex items-center justify-between font-mono text-[11px]">
+            <span>[${t.time}] #${t.id} ${t.symbol} (${t.reason})</span>
+            <span class="${t.pnlUzs >= 0 ? 'text-emerald-400' : 'text-rose-400'} font-bold">${t.pnlUzs >= 0 ? '+' : ''}${t.pnlUzs.toLocaleString()} so'm</span>
+          </div>
+        `).join('');
+      }
+
+      drawChart();
+    }
+
+    function drawChart() {
+      const canvas = document.getElementById('liveChart');
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = 280 * dpr;
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      const W = rect.width, H = 280;
+      ctx.clearRect(0, 0, W, H);
+
+      const slice = candles.slice(-55);
+      let minP = Infinity, maxP = -Infinity;
+      slice.forEach(c => {
+        if (c.low < minP) minP = c.low;
+        if (c.high > maxP) maxP = c.high;
+      });
+      openPositions.forEach(p => {
+        if (p.sl < minP) minP = p.sl;
+        if (p.tp > maxP) maxP = p.tp;
+      });
+      const pad = (maxP - minP) * 0.14 || 5;
+      minP -= pad; maxP += pad;
+
+      const chartRight = W - 68;
+      const yFor = p => 14 + (1 - (p - minP) / (maxP - minP)) * (H - 28);
+      const stepX = chartRight / slice.length;
+
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.font = '10px monospace';
+      for (let g = 0; g <= 4; g++) {
+        const p = minP + ((maxP - minP) * (4 - g)) / 4;
+        const y = yFor(p);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartRight, y); ctx.stroke();
+        ctx.fillText('$' + p.toFixed(1), chartRight + 5, y + 3);
+      }
+
+      openPositions.forEach(p => {
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = '#10b981';
+        ctx.beginPath(); ctx.moveTo(0, yFor(p.tp)); ctx.lineTo(chartRight, yFor(p.tp)); ctx.stroke();
+        ctx.strokeStyle = '#f43f5e';
+        ctx.beginPath(); ctx.moveTo(0, yFor(p.sl)); ctx.lineTo(chartRight, yFor(p.sl)); ctx.stroke();
+        ctx.setLineDash([]);
+      });
+
+      slice.forEach((c, i) => {
+        const x = i * stepX + stepX * 0.5;
+        const bull = c.close >= c.open;
+        ctx.strokeStyle = bull ? '#10b981' : '#f43f5e';
+        ctx.fillStyle = bull ? '#10b981' : '#f43f5e';
+        ctx.beginPath(); ctx.moveTo(x, yFor(c.high)); ctx.lineTo(x, yFor(c.low)); ctx.stroke();
+        const yO = yFor(c.open), yC = yFor(c.close);
+        ctx.fillRect(x - Math.max(2, stepX * 0.28), Math.min(yO, yC), Math.max(4, stepX * 0.56), Math.max(2, Math.abs(yC - yO)));
+      });
+
+      // EMA 50 & EMA 20
+      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 1.5; ctx.beginPath();
+      let s50 = false;
+      slice.forEach((c, i) => {
+        if (!c.ema50) return;
+        const x = i * stepX + stepX * 0.5, y = yFor(c.ema50);
+        if (!s50) { ctx.moveTo(x, y); s50 = true; } else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 1.5; ctx.beginPath();
+      let s20 = false;
+      slice.forEach((c, i) => {
+        if (!c.ema20) return;
+        const x = i * stepX + stepX * 0.5, y = yFor(c.ema20);
+        if (!s20) { ctx.moveTo(x, y); s20 = true; } else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    loadBinanceHistory("PAXGUSDT");
+    setInterval(stepSimulation, 900);
+    window.addEventListener('resize', drawChart);
+  </script>
+</body>
+</html>
