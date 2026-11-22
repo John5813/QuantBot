@@ -15,7 +15,7 @@
           📊 Quant Spot Bot — Veb Boshqaruv Paneli
           <span class="text-xs px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">BINANCE JONLI SIMULYATOR</span>
         </h1>
-        <p class="text-xs text-slate-400 mt-0.5">1,000,000 so'm byudjet • 1% Risk (-10,000 so'm SL) • 1:2 Foyda (+20,000 so'm TP) • 3% Kunlik Kill-Switch</p>
+        <p class="text-xs text-slate-400 mt-0.5">1,000,000 so'm byudjet • 1% Risk (SL'da ~10,000 so'm, komissiya bilan) • 1:2 Foyda • 3% Kunlik Kill-Switch • Bot bilan bir xil qoidalar</p>
       </div>
       <div class="flex items-center gap-2">
         <button onclick="manualAddTrade()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition">
@@ -38,7 +38,7 @@
           <p class="text-xs text-slate-400">O'zingiz xohlagan bozorni tanlang yoki 5 ta bozor bo'yicha Avto-Skanerni yoqing</p>
         </div>
         <label class="flex items-center gap-2 text-xs bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 cursor-pointer">
-          <input type="checkbox" id="chkAutoScan" onchange="autoScan = this.checked" class="accent-sky-500" />
+          <input type="checkbox" id="chkAutoScan" onchange="autoScan = this.checked" disabled title="Simulyatorda faqat bitta bozor sinovi" class="accent-sky-500" />
           <span>🔍 Avto-Skaner (5 ta bozordan eng qulayini tanlash)</span>
         </label>
       </div>
@@ -76,8 +76,8 @@
         <div class="flex items-center gap-3 font-mono text-[11px] text-slate-400">
           <span><b class="text-sky-400">━━</b> EMA 20</span>
           <span><b class="text-amber-400">━━</b> EMA 50</span>
-          <span><b class="text-emerald-400">- -</b> Take-Profit (+2%)</span>
-          <span><b class="text-rose-400">- -</b> Stop-Loss (-1%)</span>
+          <span><b class="text-emerald-400">- -</b> Take-Profit (narx +4.16%)</span>
+          <span><b class="text-rose-400">- -</b> Stop-Loss (narx -2.08%)</span>
         </div>
       </div>
       <canvas id="liveChart" class="w-full rounded-lg bg-slate-950 border border-slate-800" height="280"></canvas>
@@ -100,6 +100,13 @@
   </div>
 
   <script>
+    // Ushbu sahifa — bot.py qoidalarining brauzerdagi SIMULYATORI (pul ishlatilmaydi).
+    // Parametrlar config.py bilan bir xil bo'lishi shart:
+    const CFG = {
+      riskPerTrade: 0.01, rewardToRisk: 2.0, maxDailyLoss: 0.03, maxPositions: 2,
+      maxPositionCapital: 0.48, stopPct: 0.0208, feePct: 0.001,
+      fastEma: 20, slowEma: 50, rsiPeriod: 14, rsiLow: 35, rsiHigh: 52
+    };
     const ALLOWED = {
       PAXGUSDT: "Oltin (PAXG/USDT)",
       BTCUSDT: "Bitcoin (BTC/USDT)",
@@ -108,77 +115,103 @@
       SOLUSDT: "Solana (SOL/USDT)"
     };
     const UZS_RATE = 12800;
+    const START_USDT = 1000000 / UZS_RATE;
     let symbol = "PAXGUSDT";
     let autoScan = false;
     let paused = false;
-    let balanceUzs = 1000000;
-    let dailyPnlUzs = 0;
+    let balance = START_USDT;          // USDT
+    let dayStartBalance = START_USDT;
+    let dailyPnl = 0;                  // USDT
     let killSwitch = false;
     let openPositions = [];
     let history = [];
     let candles = [];
-    let simIdx = 60;
     let allCandles = [];
+    let simIdx = 60;
     let nextId = 1;
+    let lastDay = null;
+    let lastSignalIdx = -1;
+
+    const toUzs = usd => Math.round(usd * UZS_RATE);
+    const fmtUzs = usd => `${toUzs(usd) >= 0 ? '+' : ''}${toUzs(usd).toLocaleString()} so'm`;
+    const esc = v => String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+
+    function syntheticCandles(n = 200, start = 2650) {
+      let price = start, out = [];
+      const now = Date.now();
+      for (let i = 0; i < n; i++) {
+        const open = price;
+        const close = Math.max(start * 0.5, open + Math.sin(i / 12) * 2 + (Math.random() - 0.48) * 6);
+        out.push({
+          t: now - (n - i) * 900000,
+          open, close,
+          high: Math.max(open, close) + Math.random() * 3,
+          low: Math.min(open, close) - Math.random() * 3
+        });
+        price = close;
+      }
+      return out;
+    }
 
     async function loadBinanceHistory(sym) {
       symbol = sym;
+      openPositions = [];
+      lastSignalIdx = -1;
       renderButtons();
-      document.getElementById('statusNotice').textContent = `⏳ Binance'dan ${sym} tarixiy grafigi yuklanmoqda...`;
+      const notice = document.getElementById('statusNotice');
+      notice.textContent = `⏳ Binance'dan ${sym} tarixiy grafigi yuklanmoqda...`;
+      let raw;
       try {
-        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=15m&limit=200`);
-        const raw = await res.json();
-        allCandles = raw.map((r, idx) => ({
-          idx,
-          time: new Date(r[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-          open: parseFloat(r[1]),
-          high: parseFloat(r[2]),
-          low: parseFloat(r[3]),
-          close: parseFloat(r[4]),
-          ema20: null,
-          ema50: null,
-          rsi: 50
-        }));
-        computeIndicators(allCandles);
-        simIdx = 60;
-        candles = allCandles.slice(0, simIdx);
-        document.getElementById('statusNotice').textContent = `✅ Binance'dan haqiqiy ${sym} shamchalari yuklandi. Jonli simulyatsiya ishlamoqda.`;
+        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=15m&limit=300`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        raw = (await res.json()).map(r => ({ t: r[0], open: +r[1], high: +r[2], low: +r[3], close: +r[4] }));
+        notice.textContent = `✅ Binance'dan haqiqiy ${sym} shamchalari yuklandi. Tarix ustida simulyatsiya ishlamoqda.`;
       } catch (e) {
-        document.getElementById('statusNotice').textContent = `⚠️ Internet yo'q yoki API yopiq — oflayn grafik ishlatilmoqda.`;
+        raw = syntheticCandles();
+        notice.textContent = `⚠️ Binance'ga ulanib bo'lmadi — TASODIFIY (real bo'lmagan) grafik ishlatilmoqda.`;
       }
+      allCandles = raw.map(c => Object.assign(c, {
+        time: new Date(c.t).toLocaleString([], {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}),
+        day: new Date(c.t).toDateString()
+      }));
+      computeIndicators(allCandles);
+      simIdx = CFG.slowEma + 5;
+      candles = allCandles.slice(0, simIdx + 1);
       renderUI();
     }
 
+    // bot.py / strategy.py bilan bir xil: SMA bilan boshlanadigan EMA va Wilder RSI
     function computeIndicators(arr) {
-      for (let i = 0; i < arr.length; i++) {
-        if (i >= 19) {
-          if (i === 19) {
-            let s = 0; for (let k = 0; k <= 19; k++) s += arr[k].close;
-            arr[i].ema20 = s / 20;
-          } else {
-            const k = 2 / 21;
-            arr[i].ema20 = arr[i].close * k + arr[i - 1].ema20 * (1 - k);
+      const ema = (period, key) => {
+        const k = 2 / (period + 1);
+        let v = null;
+        arr.forEach((c, i) => {
+          if (i === period - 1) {
+            v = arr.slice(0, period).reduce((s, x) => s + x.close, 0) / period;
+          } else if (i >= period) {
+            v = (c.close - v) * k + v;
           }
+          c[key] = i >= period - 1 ? v : null;
+        });
+      };
+      ema(CFG.fastEma, 'ema20');
+      ema(CFG.slowEma, 'ema50');
+      const p = CFG.rsiPeriod;
+      let ag = 0, al = 0;
+      arr.forEach((c, i) => {
+        c.rsi = null;
+        if (i === 0) return;
+        const d = c.close - arr[i - 1].close;
+        const g = Math.max(d, 0), l = Math.max(-d, 0);
+        if (i <= p) {
+          ag += g / p; al += l / p;
+          if (i < p) return;
+        } else {
+          ag = (ag * (p - 1) + g) / p;
+          al = (al * (p - 1) + l) / p;
         }
-        if (i >= 49) {
-          if (i === 49) {
-            let s = 0; for (let k = 0; k <= 49; k++) s += arr[k].close;
-            arr[i].ema50 = s / 50;
-          } else {
-            const k = 2 / 51;
-            arr[i].ema50 = arr[i].close * k + arr[i - 1].ema50 * (1 - k);
-          }
-        }
-        if (i >= 15) {
-          let g = 0, l = 0;
-          for (let k = i - 13; k <= i; k++) {
-            const d = arr[k].close - arr[k - 1].close;
-            if (d > 0) g += d; else l -= d;
-          }
-          const rs = l === 0 ? 100 : (g / 14) / (l / 14);
-          arr[i].rsi = +(100 - 100 / (1 + rs)).toFixed(1);
-        }
-      }
+        c.rsi = al === 0 ? (ag > 0 ? 100 : 50) : +(100 - 100 / (1 + ag / al)).toFixed(2);
+      });
     }
 
     function renderButtons() {
@@ -191,44 +224,61 @@
         btn.className = `px-3 py-2 rounded-lg text-xs font-medium border text-left transition ${
           active ? 'bg-sky-500/20 border-sky-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
         }`;
-        btn.innerHTML = `<div class="font-bold">${sym}</div><div class="text-[11px] opacity-80">${label}</div>`;
+        btn.innerHTML = `<div class="font-bold">${esc(sym)}</div><div class="text-[11px] opacity-80">${esc(label)}</div>`;
         container.appendChild(btn);
       });
     }
 
+    const usedCapital = () => openPositions.reduce((s, p) => s + p.value, 0);
+    const openRisk = () => openPositions.reduce((s, p) => s + p.risk, 0);
+    const riskFraction = () => CFG.stopPct + CFG.feePct + CFG.feePct * (1 - CFG.stopPct);
+
+    function canOpen(manual) {
+      if (killSwitch) return [false, 'Kill-Switch aktiv'];
+      if (!manual && paused) return [false, 'Pauza'];
+      if (!manual && openPositions.length >= 1) return [false, '1-bitim ishlamoqda'];
+      if (openPositions.length >= CFG.maxPositions) return [false, 'Maksimal bitimlar soni'];
+      const worst = Math.max(0, -dailyPnl) + openRisk() + balance * CFG.riskPerTrade;
+      if (worst > dayStartBalance * CFG.maxDailyLoss * 1.005) return [false, 'Kunlik 3% limit buzilishi mumkin'];
+      return [true, ''];
+    }
+
     function manualAddTrade() {
-      if (killSwitch || openPositions.length >= 2 || !candles.length) return;
-      const c = candles[candles.length - 1];
-      openPosition(c, "QO'LDA (2-BITIM)");
+      if (!candles.length) return;
+      const [ok, reason] = canOpen(true);
+      if (!ok) { document.getElementById('statusNotice').textContent = `⚠️ Rad etildi: ${reason}`; return; }
+      openPosition(candles[candles.length - 1], "QO'LDA");
       renderUI();
     }
 
     function openPosition(c, source) {
       const entry = c.close;
-      const sl = +(entry * 0.992).toFixed(2);
-      const tp = +(entry * 1.016).toFixed(2);
+      const value = Math.min(
+        balance * CFG.riskPerTrade / riskFraction(),
+        balance * CFG.maxPositionCapital,
+        Math.max(0, balance - usedCapital())
+      );
+      if (value < 5) return;
+      const qty = value / entry;
+      const sl = entry * (1 - CFG.stopPct);
+      const tp = entry * (1 + CFG.stopPct * CFG.rewardToRisk);
+      const entryFee = value * CFG.feePct;
       openPositions.push({
-        id: nextId++,
-        symbol,
-        source,
-        entry,
-        sl,
-        tp,
-        riskUzs: 10000,
-        rewardUzs: 20000
+        id: nextId++, symbol, source, entry, qty, value, sl, tp, entryFee,
+        risk: (entry - sl) * qty + entryFee + sl * qty * CFG.feePct
       });
     }
 
-    function closePosition(id, reason) {
+    function closePosition(id, reason, price) {
       const idx = openPositions.findIndex(p => p.id === id);
       if (idx === -1 || !candles.length) return;
       const p = openPositions.splice(idx, 1)[0];
-      const cur = candles[candles.length - 1].close;
-      const pct = (cur - p.entry) / p.entry;
-      const pnlUzs = Math.round(480000 * pct);
-      balanceUzs += pnlUzs;
-      dailyPnlUzs += pnlUzs;
-      history.push({ id: p.id, symbol: p.symbol, reason, pnlUzs, time: new Date().toLocaleTimeString() });
+      const exit = price ?? candles[candles.length - 1].close;
+      const pnl = (exit - p.entry) * p.qty - p.entryFee - exit * p.qty * CFG.feePct;
+      balance += pnl;
+      dailyPnl += pnl;
+      if (dailyPnl <= -dayStartBalance * CFG.maxDailyLoss) killSwitch = true;
+      history.push({ id: p.id, symbol: p.symbol, reason, pnl, time: candles[candles.length - 1].time });
       renderUI();
     }
 
@@ -243,68 +293,76 @@
 
     function stepSimulation() {
       if (paused || !allCandles.length) return;
-      simIdx = (simIdx + 1) % allCandles.length;
-      if (simIdx < 55) simIdx = 55;
+      if (simIdx + 1 >= allCandles.length) {
+        document.getElementById('statusNotice').textContent = '🏁 Tarix tugadi. Boshqa bozorni tanlang yoki sahifani yangilang.';
+        return;
+      }
+      simIdx += 1;
       candles = allCandles.slice(0, simIdx + 1);
       const c = candles[candles.length - 1];
       const prev = candles[candles.length - 2];
 
-      // Check SL / TP
-      for (let i = openPositions.length - 1; i >= 0; i--) {
-        const p = openPositions[i];
-        if (c.low <= p.sl) {
-          balanceUzs -= p.riskUzs;
-          dailyPnlUzs -= p.riskUzs;
-          openPositions.splice(i, 1);
-          history.push({ id: p.id, symbol: p.symbol, reason: "STOP-LOSS (-1%)", pnlUzs: -p.riskUzs, time: c.time });
-          if (dailyPnlUzs <= -30000) killSwitch = true;
-        } else if (c.high >= p.tp) {
-          balanceUzs += p.rewardUzs;
-          dailyPnlUzs += p.rewardUzs;
-          openPositions.splice(i, 1);
-          history.push({ id: p.id, symbol: p.symbol, reason: "TAKE-PROFIT (+2%)", pnlUzs: p.rewardUzs, time: c.time });
-        }
+      if (lastDay !== c.day) {
+        lastDay = c.day;
+        dayStartBalance = balance;
+        dailyPnl = 0;
+        killSwitch = false;
       }
 
-      // Auto entry
-      if (!killSwitch && openPositions.length === 0 && c.ema20 && c.ema50) {
-        if (c.ema20 > c.ema50 && c.rsi >= 35 && c.rsi <= 54 && c.close > prev.close) {
+      // SL / TP (bitta shamchada ikkalasi urilsa — ehtiyotkorlik bilan SL)
+      openPositions.slice().forEach(p => {
+        if (c.low <= p.sl) closePosition(p.id, 'STOP-LOSS', Math.min(c.open, p.sl));
+        else if (c.high >= p.tp) closePosition(p.id, 'TAKE-PROFIT', Math.max(c.open, p.tp));
+      });
+
+      // Avtomatik kirish: strategy.py bilan bir xil 3 ta shart, bitta shamchada bir marta
+      const [ok] = canOpen(false);
+      if (ok && simIdx !== lastSignalIdx && c.ema20 !== null && c.ema50 !== null && c.rsi !== null) {
+        const trendUp = c.ema20 > c.ema50 && c.close > c.ema50;
+        const pullback = c.rsi >= CFG.rsiLow && c.rsi <= CFG.rsiHigh;
+        if (trendUp && pullback && c.close > prev.close) {
+          lastSignalIdx = simIdx;
           openPosition(c, "AVTOMATIK");
         }
       }
       renderUI();
     }
 
+    function fmtPrice(v) {
+      return '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: v >= 1 ? 2 : 6});
+    }
+
     function renderUI() {
       if (!candles.length) return;
       const c = candles[candles.length - 1];
-      document.getElementById('kpiBalanceUzs').textContent = `${balanceUzs.toLocaleString()} so'm`;
-      document.getElementById('kpiBalanceUsdt').textContent = `$${(balanceUzs / UZS_RATE).toFixed(2)} USDT`;
+      document.getElementById('kpiBalanceUzs').textContent = `${toUzs(balance).toLocaleString()} so'm`;
+      document.getElementById('kpiBalanceUsdt').textContent = `$${balance.toFixed(2)} USDT`;
       const dEl = document.getElementById('kpiDailyPnl');
-      dEl.textContent = `${dailyPnlUzs >= 0 ? '+' : ''}${dailyPnlUzs.toLocaleString()} so'm`;
-      dEl.className = `text-base font-bold mt-1 ${dailyPnlUzs >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
-      document.getElementById('kpiKillSwitch').textContent = killSwitch ? '🛑 Kill-Switch: Savdo bloklangan' : '🟢 Kill-Switch: Xavfsiz';
-      document.getElementById('kpiOpenCount').textContent = `${openPositions.length} / 2`;
-      const freeUzs = Math.max(0, balanceUzs - openPositions.length * 480000);
-      document.getElementById('kpiFreeCap').textContent = `Bo'sh: ${freeUzs.toLocaleString()} so'm`;
-      document.getElementById('kpiPrice').textContent = `$${c.close.toLocaleString()}`;
-      document.getElementById('kpiIndicators').textContent = `RSI: ${c.rsi} | EMA20: ${c.ema20 ? c.ema20.toFixed(1) : '-'}`;
+      dEl.textContent = fmtUzs(dailyPnl);
+      dEl.className = `text-base font-bold mt-1 ${dailyPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+      const ks = document.getElementById('kpiKillSwitch');
+      ks.textContent = killSwitch ? '🛑 Kill-Switch: Savdo bloklangan' : '🟢 Kill-Switch: Xavfsiz';
+      ks.className = `text-xs ${killSwitch ? 'text-rose-400' : 'text-emerald-400'}`;
+      document.getElementById('kpiOpenCount').textContent = `${openPositions.length} / ${CFG.maxPositions}`;
+      document.getElementById('kpiFreeCap').textContent = `Bo'sh: ${toUzs(Math.max(0, balance - usedCapital())).toLocaleString()} so'm`;
+      document.getElementById('kpiPrice').textContent = fmtPrice(c.close);
+      document.getElementById('kpiIndicators').textContent = `RSI: ${c.rsi ?? '-'} | EMA20: ${c.ema20 ? c.ema20.toFixed(2) : '-'}`;
       document.getElementById('chartTitle').textContent = `📈 Jonli Shamchalar va Strategiya Chiziqlari (${symbol} • 15m)`;
 
       const openEl = document.getElementById('openPositionsList');
       if (!openPositions.length) {
-        openEl.innerHTML = '<div class="text-slate-500">Hozir ochiq bitim yo\\'q.</div>';
+        openEl.innerHTML = `<div class="text-slate-500">Hozir ochiq bitim yo'q.</div>`;
       } else {
         openEl.innerHTML = openPositions.map(p => {
-          const pnl = Math.round(((c.close - p.entry) / p.entry) * 480000);
+          const pnl = (c.close - p.entry) * p.qty;
           return `<div class="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
             <div>
-              <div class="font-bold text-white">Bitim #${p.id} (${p.symbol} • ${p.source})</div>
-              <div class="text-[11px] font-mono text-slate-400">Kirish: $${p.entry} | SL: $${p.sl} | TP: $${p.tp}</div>
+              <div class="font-bold text-white">Bitim #${p.id} (${esc(p.symbol)} • ${esc(p.source)})</div>
+              <div class="text-[11px] font-mono text-slate-400">Kirish: ${fmtPrice(p.entry)} | SL: ${fmtPrice(p.sl)} | TP: ${fmtPrice(p.tp)}</div>
             </div>
             <div class="text-right">
-              <div class="font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${pnl >= 0 ? '+' : ''}${pnl.toLocaleString()} so'm</div>
-              <button onclick="closePosition(${p.id}, 'QO\\'LDA YOPILDI')" class="text-[11px] text-rose-400 underline">Yopish</button>
+              <div class="font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${fmtUzs(pnl)}</div>
+              <button onclick="closePosition(${p.id}, 'QO&#39;LDA YOPILDI')" class="text-[11px] text-rose-400 underline">Yopish</button>
             </div>
           </div>`;
         }).join('');
@@ -312,12 +370,12 @@
 
       const histEl = document.getElementById('historyList');
       if (!history.length) {
-        histEl.innerHTML = '<div class="text-slate-500">Hali yopilgan bitimlar yo\\'q.</div>';
+        histEl.innerHTML = `<div class="text-slate-500">Hali yopilgan bitimlar yo'q.</div>`;
       } else {
         histEl.innerHTML = history.slice().reverse().map(t => `
           <div class="p-2 rounded bg-slate-950 border border-slate-800 flex items-center justify-between font-mono text-[11px]">
-            <span>[${t.time}] #${t.id} ${t.symbol} (${t.reason})</span>
-            <span class="${t.pnlUzs >= 0 ? 'text-emerald-400' : 'text-rose-400'} font-bold">${t.pnlUzs >= 0 ? '+' : ''}${t.pnlUzs.toLocaleString()} so'm</span>
+            <span>[${esc(t.time)}] #${t.id} ${esc(t.symbol)} (${esc(t.reason)})</span>
+            <span class="${t.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'} font-bold">${fmtUzs(t.pnl)}</span>
           </div>
         `).join('');
       }
@@ -336,23 +394,19 @@
       ctx.scale(dpr, dpr);
       const W = rect.width, H = 280;
       ctx.clearRect(0, 0, W, H);
+      if (!candles.length) { ctx.restore(); return; }
 
       const slice = candles.slice(-55);
       let minP = Infinity, maxP = -Infinity;
-      slice.forEach(c => {
-        if (c.low < minP) minP = c.low;
-        if (c.high > maxP) maxP = c.high;
-      });
-      openPositions.forEach(p => {
-        if (p.sl < minP) minP = p.sl;
-        if (p.tp > maxP) maxP = p.tp;
-      });
-      const pad = (maxP - minP) * 0.14 || 5;
+      slice.forEach(c => { minP = Math.min(minP, c.low); maxP = Math.max(maxP, c.high); });
+      openPositions.forEach(p => { minP = Math.min(minP, p.sl); maxP = Math.max(maxP, p.tp); });
+      const pad = (maxP - minP) * 0.14 || 1;
       minP -= pad; maxP += pad;
 
-      const chartRight = W - 68;
+      const chartRight = W - 72;
       const yFor = p => 14 + (1 - (p - minP) / (maxP - minP)) * (H - 28);
       const stepX = chartRight / slice.length;
+      const xFor = i => i * stepX + stepX * 0.5;
 
       ctx.strokeStyle = 'rgba(255,255,255,0.06)';
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
@@ -361,7 +415,7 @@
         const p = minP + ((maxP - minP) * (4 - g)) / 4;
         const y = yFor(p);
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartRight, y); ctx.stroke();
-        ctx.fillText('$' + p.toFixed(1), chartRight + 5, y + 3);
+        ctx.fillText('$' + p.toFixed(maxP >= 1000 ? 1 : 3), chartRight + 5, y + 3);
       }
 
       openPositions.forEach(p => {
@@ -374,7 +428,7 @@
       });
 
       slice.forEach((c, i) => {
-        const x = i * stepX + stepX * 0.5;
+        const x = xFor(i);
         const bull = c.close >= c.open;
         ctx.strokeStyle = bull ? '#10b981' : '#f43f5e';
         ctx.fillStyle = bull ? '#10b981' : '#f43f5e';
@@ -383,24 +437,15 @@
         ctx.fillRect(x - Math.max(2, stepX * 0.28), Math.min(yO, yC), Math.max(4, stepX * 0.56), Math.max(2, Math.abs(yC - yO)));
       });
 
-      // EMA 50 & EMA 20
-      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 1.5; ctx.beginPath();
-      let s50 = false;
-      slice.forEach((c, i) => {
-        if (!c.ema50) return;
-        const x = i * stepX + stepX * 0.5, y = yFor(c.ema50);
-        if (!s50) { ctx.moveTo(x, y); s50 = true; } else ctx.lineTo(x, y);
+      [['ema50', '#fbbf24'], ['ema20', '#38bdf8']].forEach(([key, color]) => {
+        ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
+        let started = false;
+        slice.forEach((c, i) => {
+          if (c[key] === null) return;
+          if (!started) { ctx.moveTo(xFor(i), yFor(c[key])); started = true; } else ctx.lineTo(xFor(i), yFor(c[key]));
+        });
+        ctx.stroke();
       });
-      ctx.stroke();
-
-      ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 1.5; ctx.beginPath();
-      let s20 = false;
-      slice.forEach((c, i) => {
-        if (!c.ema20) return;
-        const x = i * stepX + stepX * 0.5, y = yFor(c.ema20);
-        if (!s20) { ctx.moveTo(x, y); s20 = true; } else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
 
       ctx.restore();
     }

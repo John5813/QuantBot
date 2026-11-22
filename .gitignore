@@ -1,6 +1,9 @@
 # API kalitlar va mahfiy sozlamalar GitHub'ga chiqib ketmasligi uchun:
 .env
 bot_state.json
+bot_state.json.tmp
 __pycache__/
 *.pyc
+.venv/
+venv/
 .DS_Store
